@@ -8,6 +8,13 @@ package Controladores;
  *
  * @author luisg
  */
-public class PoliticaPlanificacion {
-    
+
+/**
+ * Define los algoritmos de planificación de disco disponibles.
+ */
+public enum PoliticaPlanificacion {
+    FIFO,   // First-In, First-Out
+    SSTF,   // Shortest Seek Time First
+    SCAN,
+    CSCAN   // Circular SCAN
 }

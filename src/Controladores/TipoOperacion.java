@@ -8,6 +8,11 @@ package Controladores;
  *
  * @author luisg
  */
-public class TipoOperacion {
+public enum TipoOperacion {
     
+    CREAR_ARCHIVO,
+    ELIMINAR_ARCHIVO,
+    CREAR_DIRECTORIO,
+    ELIMINAR_DIRECTORIO
+    // Puedes añadir LEER o ACTUALIZAR si el proyecto lo requiere
 }
