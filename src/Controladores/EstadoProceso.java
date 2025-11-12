@@ -11,5 +11,7 @@ package Controladores;
 public enum EstadoProceso {
     LISTO,      // Listo para ejecutarse o esperando en cola
     BLOQUEADO,  // Esperando a que se complete su solicitud de E/S
-    TERMINADO   // El proceso ha finalizado
+    TERMINADO,
+    NUEVO,
+    EJECUTANDO// El proceso ha finalizado
 }
