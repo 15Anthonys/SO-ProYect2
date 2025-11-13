@@ -4,8 +4,6 @@
  */
 package discoduroso;
 
-
-
 import javax.swing.tree.DefaultMutableTreeNode; // Clave para el JTree
 import javax.swing.tree.DefaultTreeModel;       // Clave para el JTree
 import javax.swing.tree.TreePath;               // Para expandir nodos
@@ -17,7 +15,12 @@ import Modelo.EntradaSistemaArchivos;           // Tu clase
 import EstructuraDeDatos.Nodo;                  // Tu clase
 import EstructuraDeDatos.ListaSimple;
 import javax.swing.JTree;
-
+import javax.swing.SwingUtilities; // Para detectar el clic derecho
+import javax.swing.tree.TreePath;     // Para saber qué nodo se clickeó
+import javax.swing.JOptionPane;
+import Controladores.Proceso;
+import Controladores.SolicitudIO;
+import javax.swing.Timer;
 
 /**
  *
@@ -30,66 +33,205 @@ public class UIDisco extends javax.swing.JFrame {
      */
     private SistemaArchivos miSistemaArchivos;
     private PlanificadorDisco miPlanificador;
-    
-    
+    private Timer motorSimulacion;
+
+    private static final int TAMANO_BLOQUE_PX = 63; // Tamaño de cada cuadrado (mucho más grande)
+    private static final int ESPACIO_ENTRE_BLOQUES_PX = 5; // Espacio entre cuadrados
+    private static final int BLOQUES_POR_FILA = 10; // 10 bloques por fila (para 5 filas)
+    private static final int MARGEN_PANEL_PX = 5;
+
     public UIDisco() {
         initComponents();
-        
+
         // 1. Define el tamaño del disco (ej. 50 bloques)
         int TAMANO_DISCO = 50;
-        
+
         // 2. Crea el cerebro
         this.miSistemaArchivos = new SistemaArchivos(TAMANO_DISCO);
-        
+
         // 3. Crea el planificador
         this.miPlanificador = new PlanificadorDisco(this.miSistemaArchivos);
-        
+
+        arbolArchivosTree.setCellRenderer(new RenderizadorArbol());
+
         // --- EL PASO CLAVE ---
         // 4. Llama al método para "dibujar" el árbol por primera vez
         actualizarArbolGUI();
-        
-        
+        actualizarEstadisticas();
+        actualizarEstadisticasGUI();
+
+        motorSimulacion = new Timer(1500, (e) -> {
+            avanzarSimulacion();
+        });
+
+        motorSimulacion.start();
+
     }
-    
+
+    private void avanzarSimulacion() {
+        // Le decimos al planificador: "Procesa la siguiente tarea en la cola"
+        boolean huboCambios = miPlanificador.procesarSiguienteSolicitud();
+
+        // Si el planificador hizo algo (retornó true), actualizamos la GUI
+        if (huboCambios) {
+            System.out.println("¡Tarea procesada! Actualizando árbol...");
+            actualizarArbolGUI();     // Refresca el JTree
+            actualizarEstadisticas(); // Refresca los labels de bloques
+            actualizarEstadisticasGUI();
+        }
+    }
+
+    private void actualizarEstadisticas() {
+        int total = miSistemaArchivos.getGestorDisco().getTamanoTotal();
+        int libres = miSistemaArchivos.getGestorDisco().getCantidadBloquesLibres();
+        int ocupados = total - libres;
+
+        jLabel6.setText("Total de Bloques: " + total);
+        jLabel5.setText("Total de Bloques Ocupados: " + ocupados);
+        jLabel7.setText("Total de Bloques Disponibles: " + libres);
+    }
+
     public void actualizarArbolGUI() {
-        
+
         // 1. Obtén tu directorio raíz LÓGICO (el de tu clase)
         Directorio raizLogica = miSistemaArchivos.getDirectorioRaiz();
-        
+
         // 2. Crea el nodo raíz para la GUI (el que JTree entiende).
         //    ¡IMPORTANTE! Almacenamos el OBJETO 'raizLogica' dentro del nodo.
         //    El JTree llamará a su método .toString() para saber qué mostrar (que es el nombre).
         DefaultMutableTreeNode raizGUI = new DefaultMutableTreeNode(raizLogica);
-        
+
         // 3. (La Magia) Llama al método recursivo para poblar todo el árbol
         poblarArbolRecursivo(raizGUI, raizLogica);
 
         // 4. Crea un "Modelo" de árbol con tu nodo raíz
         DefaultTreeModel modeloArbol = new DefaultTreeModel(raizGUI);
-        
+
         // 5. Asigna ese modelo a tu JTree (el que llamaste 'arbolArchivosTree' en el diseñador)
         arbolArchivosTree.setModel(modeloArbol);
-        
+
         // (Opcional) Expande el nodo raíz para que se vea
         arbolArchivosTree.expandPath(new TreePath(raizGUI.getPath()));
     }
-    
-    
-    
-    
-    
-    
+
+    private void actualizarEstadisticasGUI() {
+        // 1. Obtenemos los datos frescos del Gestor de Disco
+        int total = miSistemaArchivos.getGestorDisco().getTamanoTotal();
+        int libres = miSistemaArchivos.getGestorDisco().getCantidadBloquesLibres();
+        int ocupados = total - libres;
+
+        // 2. Imprimimos en consola para verificar que el cálculo es correcto (Depuración)
+        System.out.println("Estadísticas -> Total: " + total + ", Libres: " + libres + ", Ocupados: " + ocupados);
+
+        // 3. Cambiamos el texto de los JLabels existentes
+        // jLabel6 era el de "Total"
+        jLabel6.setText("Total de Bloques: " + total);
+
+        // jLabel5 era el de "Ocupados"
+        jLabel5.setText("Total de Bloques ocupados: " + ocupados);
+
+        // jLabel7 era el de "Disponibles"
+        jLabel7.setText("Total de Bloques Disponibles: " + libres);
+
+        // 4. Forzamos el repintado del panel (por si acaso se queda pegado)
+        jPanel7.repaint();
+
+        jPanel4.repaint();
+    }
+
     /**
-     * Método auxiliar RECURSIVO.
-     * Recorre tu ListaSimple de hijos y los añade al árbol de la GUI.
+     * Dibuja la representación visual de todos los bloques del disco en
+     * jPanel4. (Versión MEJORADA: con nombres de archivo y punteros)
+     *
+     * @param g El contexto gráfico del panel.
+     */
+    private void dibujarBloques(java.awt.Graphics g) {
+
+        // 1. Verificación de seguridad
+        if (miSistemaArchivos == null) {
+            return;
+        }
+
+        Controladores.GestorDisco gestor = miSistemaArchivos.getGestorDisco();
+        Modelo.Bloque[] disco = gestor.getDisco();
+        int totalBloques = gestor.getTamanoTotal();
+
+        // Colores
+        java.awt.Color colorLibre = new java.awt.Color(230, 230, 230); // Gris muy claro
+        java.awt.Color colorBorde = java.awt.Color.DARK_GRAY;
+        java.awt.Color colorTexto = java.awt.Color.BLACK;
+
+        for (int i = 0; i < totalBloques; i++) {
+
+            // Cálculo de posición 5x10
+            int columna = i % BLOQUES_POR_FILA;
+            int fila = i / BLOQUES_POR_FILA;
+
+            int x = MARGEN_PANEL_PX + columna * (TAMANO_BLOQUE_PX + ESPACIO_ENTRE_BLOQUES_PX);
+            int y = MARGEN_PANEL_PX + fila * (TAMANO_BLOQUE_PX + ESPACIO_ENTRE_BLOQUES_PX);
+
+            Modelo.Bloque bloqueActual = disco[i];
+            boolean estaOcupado = bloqueActual.estaOcupado();
+
+            // Lógica de color por archivo
+            if (estaOcupado) {
+                String propietario = bloqueActual.getPropietario();
+                int hash = propietario.hashCode();
+                // (Esta es la lógica que genera un color "único" por archivo)
+                java.awt.Color colorArchivo = java.awt.Color.getHSBColor(Math.abs(hash % 360) / 360f, 0.7f, 1.0f);
+                g.setColor(colorArchivo);
+            } else {
+                g.setColor(colorLibre);
+            }
+
+            // Dibujar el cuadrado relleno
+            g.fillRect(x, y, TAMANO_BLOQUE_PX, TAMANO_BLOQUE_PX);
+
+            // Dibujar el borde
+            g.setColor(colorBorde);
+            g.drawRect(x, y, TAMANO_BLOQUE_PX, TAMANO_BLOQUE_PX);
+
+            // --- 2. DIBUJAR EL TEXTO DENTRO DEL BLOQUE ---
+            if (estaOcupado) {
+                // Configurar fuente (pequeña y negrita)
+                g.setFont(new java.awt.Font("Arial", java.awt.Font.BOLD, 10));
+                g.setColor(colorTexto);
+
+                // --- Extraer y acortar el nombre del archivo ---
+                String propietario = bloqueActual.getPropietario(); // ej: "/root/docs/mi_archivo.txt"
+                int lastSlash = propietario.lastIndexOf('/');
+                String nombreArchivo = (lastSlash == -1) ? propietario : propietario.substring(lastSlash + 1); // ej: "mi_archivo.txt"
+
+                // Acortar si es muy largo (ej: "mi_archi…")
+                if (nombreArchivo.length() > 9) {
+                    nombreArchivo = nombreArchivo.substring(0, 8) + "…";
+                }
+
+                // Dibujar Nombre (arriba)
+                g.drawString(nombreArchivo, x + 5, y + 15); // 15px desde arriba
+
+                // --- Dibujar Puntero de Asignación Encadenada (abajo) ---
+                int siguiente = bloqueActual.getSiguienteBloque();
+                String sigStr = (siguiente == -1) ? "FIN" : "-> " + siguiente;
+
+                g.setFont(new java.awt.Font("Arial", java.awt.Font.BOLD, 12));
+                g.drawString(sigStr, x + 5, y + 50); // 50px desde arriba (casi abajo)
+            }
+        }
+    }
+
+    /**
+     * Método auxiliar RECURSIVO. Recorre tu ListaSimple de hijos y los añade al
+     * árbol de la GUI.
+     *
      * * @param nodoPadreGUI El nodo de la GUI al que le añadiremos hijos.
      * @param dirPadreLogico El Directorio (tuyo) del que leeremos los hijos.
      */
     private void poblarArbolRecursivo(DefaultMutableTreeNode nodoPadreGUI, Directorio dirPadreLogico) {
-        
+
         // Obtenemos la lista de hijos usando tu método getHijos()
         ListaSimple<EntradaSistemaArchivos> listaHijos = dirPadreLogico.getHijos();
-        
+
         // Caso base: Si no hay hijos, terminamos.
         if (listaHijos.isEmpty()) {
             return;
@@ -97,30 +239,27 @@ public class UIDisco extends javax.swing.JFrame {
 
         // Iteramos sobre tu ListaSimple usando getpFirst() y getPnext()
         Nodo<EntradaSistemaArchivos> nodoActual = listaHijos.getpFirst();
-        
+
         while (nodoActual != null) {
-            
+
             // 1. Obtenemos el dato (el Archivo o Directorio)
             EntradaSistemaArchivos entradaLogica = nodoActual.getData();
-            
+
             // 2. Creamos un nuevo nodo de GUI (guardando el objeto lógico)
             DefaultMutableTreeNode nuevoNodoGUI = new DefaultMutableTreeNode(entradaLogica);
-            
+
             // 3. Lo añadimos al padre en la GUI
             nodoPadreGUI.add(nuevoNodoGUI);
-            
+
             // 4. RECURSIÓN: Si este hijo es un Directorio, repetimos el proceso
             if (entradaLogica instanceof Directorio) {
                 poblarArbolRecursivo(nuevoNodoGUI, (Directorio) entradaLogica);
             }
-            
+
             // 5. Avanzamos en tu ListaSimple
             nodoActual = nodoActual.getPnext();
         }
     }
-    
-    
-    
 
     /**
      * This method is called from within the constructor to initialize the form.
@@ -131,6 +270,10 @@ public class UIDisco extends javax.swing.JFrame {
     // <editor-fold defaultstate="collapsed" desc="Generated Code">//GEN-BEGIN:initComponents
     private void initComponents() {
 
+        menuContextual = new javax.swing.JPopupMenu();
+        menuItemCrearDir = new javax.swing.JMenuItem();
+        menuItemCrearArchivo = new javax.swing.JMenuItem();
+        menuItemEliminar = new javax.swing.JMenuItem();
         jTabbedPane1 = new javax.swing.JTabbedPane();
         jPanel1 = new javax.swing.JPanel();
         jPanel2 = new javax.swing.JPanel();
@@ -140,7 +283,13 @@ public class UIDisco extends javax.swing.JFrame {
         jLabel1 = new javax.swing.JLabel();
         jLabel2 = new javax.swing.JLabel();
         jButton1 = new javax.swing.JButton();
-        jPanel4 = new javax.swing.JPanel();
+        jPanel4 = new javax.swing.JPanel() {
+            @Override
+            protected void paintComponent(java.awt.Graphics g) {
+                super.paintComponent(g); // Dibuja el fondo del panel
+                dibujarBloques(g);       // Llama a tu método de dibujo de bloques
+            }
+        };
         jPanel5 = new javax.swing.JPanel();
         jPanel6 = new javax.swing.JPanel();
         jLabel3 = new javax.swing.JLabel();
@@ -151,10 +300,39 @@ public class UIDisco extends javax.swing.JFrame {
         jLabel6 = new javax.swing.JLabel();
         jLabel7 = new javax.swing.JLabel();
 
+        menuItemCrearDir.setText("Crear Directorio");
+        menuItemCrearDir.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                menuItemCrearDirActionPerformed(evt);
+            }
+        });
+        menuContextual.add(menuItemCrearDir);
+
+        menuItemCrearArchivo.setText("Crear Archivo");
+        menuItemCrearArchivo.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                menuItemCrearArchivoActionPerformed(evt);
+            }
+        });
+        menuContextual.add(menuItemCrearArchivo);
+
+        menuItemEliminar.setText("Eliminar");
+        menuItemEliminar.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                menuItemEliminarActionPerformed(evt);
+            }
+        });
+        menuContextual.add(menuItemEliminar);
+
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
 
         jPanel2.setBackground(new java.awt.Color(0, 0, 0));
 
+        arbolArchivosTree.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                arbolArchivosTreeMouseClicked(evt);
+            }
+        });
         jScrollPane1.setViewportView(arbolArchivosTree);
 
         javax.swing.GroupLayout jPanel2Layout = new javax.swing.GroupLayout(jPanel2);
@@ -273,12 +451,16 @@ public class UIDisco extends javax.swing.JFrame {
 
         jPanel7.setBackground(new java.awt.Color(255, 255, 204));
 
+        jLabel4.setForeground(new java.awt.Color(0, 0, 0));
         jLabel4.setText("Almacenamiento");
 
+        jLabel5.setForeground(new java.awt.Color(0, 0, 0));
         jLabel5.setText("Total de Bloques ocupados:");
 
+        jLabel6.setForeground(new java.awt.Color(0, 0, 0));
         jLabel6.setText("Total de Bloques: 50");
 
+        jLabel7.setForeground(new java.awt.Color(0, 0, 0));
         jLabel7.setText("Total de Bloques Disponibles:");
 
         javax.swing.GroupLayout jPanel7Layout = new javax.swing.GroupLayout(jPanel7);
@@ -365,6 +547,153 @@ public class UIDisco extends javax.swing.JFrame {
         // TODO add your handling code here:
     }//GEN-LAST:event_jComboBox1ActionPerformed
 
+    private void arbolArchivosTreeMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_arbolArchivosTreeMouseClicked
+        // TODO add your handling code here:
+        // 1. Verificar si fue un clic derecho
+        if (SwingUtilities.isRightMouseButton(evt)) {
+
+            // 2. Obtener la fila (row) del árbol donde se hizo clic
+            int fila = arbolArchivosTree.getRowForLocation(evt.getX(), evt.getY());
+
+            // Si no se hizo clic en ningún nodo (clic en el fondo), no hacemos nada
+            if (fila == -1) {
+                return;
+            }
+
+            // 3. Seleccionar programáticamente el nodo que se clickeó
+            // Esto es CLAVE para que luego podamos obtener el nodo correcto.
+            arbolArchivosTree.setSelectionRow(fila);
+
+            // 4. Obtener el nodo y el objeto lógico (Archivo o Directorio)
+            TreePath rutaSeleccionada = arbolArchivosTree.getPathForLocation(evt.getX(), evt.getY());
+
+            // Verificación de seguridad
+            if (rutaSeleccionada == null) {
+                return;
+            }
+
+            DefaultMutableTreeNode nodoClickeado = (DefaultMutableTreeNode) rutaSeleccionada.getLastPathComponent();
+            Object objetoClickeado = nodoClickeado.getUserObject();
+            EntradaSistemaArchivos entrada = (EntradaSistemaArchivos) objetoClickeado;
+
+            // --- AQUÍ ESTÁ LA NUEVA LÓGICA ---
+            // 5. Configurar el menú según el TIPO de objeto
+            if (entrada instanceof Directorio) {
+                // --- Es un Directorio ---
+
+                // Opciones de creación: SÍ se puede crear dentro de un directorio
+                menuItemCrearDir.setEnabled(true);
+                menuItemCrearArchivo.setEnabled(true);
+
+                // Opción de eliminar: Cambiamos el texto
+                menuItemEliminar.setText("Eliminar Directorio...");
+
+                // Lógica de seguridad: No se puede eliminar la raíz
+                if (entrada.getPadre() == null) {
+                    menuItemEliminar.setEnabled(false); // Es la raíz, deshabilitar
+                } else {
+                    menuItemEliminar.setEnabled(true);  // No es la raíz, habilitar
+                }
+
+            } else if (entrada instanceof Archivo) {
+                // --- Es un Archivo ---
+
+                // Opciones de creación: NO se puede crear "dentro" de un archivo
+                menuItemCrearDir.setEnabled(false);
+                menuItemCrearArchivo.setEnabled(false);
+
+                // Opción de eliminar: Siempre se puede eliminar un archivo
+                menuItemEliminar.setText("Eliminar Archivo...");
+                menuItemEliminar.setEnabled(true);
+            }
+
+            // 6. ¡Mostrar el menú en la posición del clic!
+            menuContextual.show(arbolArchivosTree, evt.getX(), evt.getY());
+        }
+    }//GEN-LAST:event_arbolArchivosTreeMouseClicked
+
+    private void menuItemCrearDirActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_menuItemCrearDirActionPerformed
+        // TODO add your handling code here:
+        // Como el clic derecho ya seleccionó el nodo, esto funciona:
+        DefaultMutableTreeNode nodoSeleccionado = (DefaultMutableTreeNode) arbolArchivosTree.getLastSelectedPathComponent();
+
+        // El listener ya se aseguró de que esto es un Directorio, pero validamos por si acaso
+        if (nodoSeleccionado != null && nodoSeleccionado.getUserObject() instanceof Directorio) {
+            Directorio padre = (Directorio) nodoSeleccionado.getUserObject();
+            String nombreNuevo = JOptionPane.showInputDialog(this, "Nombre del nuevo directorio:", "Crear Directorio", JOptionPane.PLAIN_MESSAGE);
+
+            if (nombreNuevo != null && !nombreNuevo.trim().isEmpty()) {
+                Proceso p = new Proceso();
+                SolicitudIO solicitud = new SolicitudIO(p, padre, nombreNuevo);
+                miPlanificador.agregarSolicitud(solicitud);
+
+                // (Recuerda que el Timer 'motorSimulacion' se encargará de actualizar el árbol)
+            }
+        }
+    }//GEN-LAST:event_menuItemCrearDirActionPerformed
+
+    private void menuItemEliminarActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_menuItemEliminarActionPerformed
+        // TODO add your handling code here:
+        DefaultMutableTreeNode nodoSeleccionado = (DefaultMutableTreeNode) arbolArchivosTree.getLastSelectedPathComponent();
+
+        if (nodoSeleccionado == null) {
+            return; // No debería pasar, pero por seguridad
+        }
+        EntradaSistemaArchivos entradaAEliminar = (EntradaSistemaArchivos) nodoSeleccionado.getUserObject();
+
+        // El listener ya deshabilitó la raíz, así que no hay que verificarlo aquí.
+        int confirm = JOptionPane.showConfirmDialog(this, "¿Seguro que desea eliminar '" + entradaAEliminar.getNombre() + "'?", "Confirmar Eliminación", JOptionPane.YES_NO_OPTION);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            Proceso p = new Proceso();
+            SolicitudIO solicitud = new SolicitudIO(p, entradaAEliminar);
+            miPlanificador.agregarSolicitud(solicitud);
+        }
+
+    }//GEN-LAST:event_menuItemEliminarActionPerformed
+
+    private void menuItemCrearArchivoActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_menuItemCrearArchivoActionPerformed
+        DefaultMutableTreeNode nodoSeleccionado = (DefaultMutableTreeNode) arbolArchivosTree.getLastSelectedPathComponent();
+
+        // 2. Validar que sea un directorio
+        if (nodoSeleccionado != null && nodoSeleccionado.getUserObject() instanceof Directorio) {
+            Directorio padre = (Directorio) nodoSeleccionado.getUserObject();
+
+            // 3. Pedir Nombre
+            String nombre = JOptionPane.showInputDialog(this, "Nombre del archivo:", "Crear Archivo", JOptionPane.PLAIN_MESSAGE);
+            if (nombre == null || nombre.trim().isEmpty()) {
+                return;
+            }
+
+            // 4. Pedir Tamaño (IMPORTANTE PARA LOS BLOQUES)
+            String tamanoStr = JOptionPane.showInputDialog(this, "Tamaño en bloques (número entero):", "Crear Archivo", JOptionPane.QUESTION_MESSAGE);
+
+            // --- ESTA ES LA PARTE QUE FALTABA ---
+            try {
+                int tamano = Integer.parseInt(tamanoStr);
+
+                if (tamano <= 0) {
+                    JOptionPane.showMessageDialog(this, "El tamaño debe ser mayor a 0.");
+                    return; // Aquí terminaba tu código
+                }
+
+                // 5. Crear Proceso y Solicitud
+                Proceso p = new Proceso();
+                // Usamos el constructor de SolicitudIO para Archivos (con tamaño)
+                SolicitudIO solicitud = new SolicitudIO(p, padre, nombre, tamano);
+
+                // 6. Encolar la tarea
+                miPlanificador.agregarSolicitud(solicitud);
+
+                System.out.println("Solicitud de archivo '" + nombre + "' (" + tamano + " bloques) encolada.");
+
+            } catch (NumberFormatException e) {
+                JOptionPane.showMessageDialog(this, "Por favor, ingrese un número válido para el tamaño.");
+            }
+            // --- FIN DE LA PARTE QUE FALTABA ---
+        }
+    }//GEN-LAST:event_menuItemCrearArchivoActionPerformed
+
     /**
      * @param args the command line arguments
      */
@@ -400,6 +729,39 @@ public class UIDisco extends javax.swing.JFrame {
         });
     }
 
+    // --- CLASE INTERNA PARA PERSONALIZAR ÍCONOS ---
+    class RenderizadorArbol extends javax.swing.tree.DefaultTreeCellRenderer {
+
+        @Override
+        public java.awt.Component getTreeCellRendererComponent(javax.swing.JTree tree, Object value,
+                boolean sel, boolean expanded, boolean leaf, int row, boolean hasFocus) {
+
+            // 1. Llamamos al comportamiento por defecto (para colores, selección, texto, etc.)
+            super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus);
+
+            // 2. Obtenemos el nodo y sus datos
+            DefaultMutableTreeNode nodo = (DefaultMutableTreeNode) value;
+            Object userObject = nodo.getUserObject();
+
+            // 3. VERIFICACIÓN DE TIPO (La parte clave)
+            if (userObject instanceof Directorio) {
+                // ES UN DIRECTORIO:
+                // Forzamos el ícono de carpeta, incluso si es una "hoja" (leaf) vacía.
+                if (expanded) {
+                    setIcon(getDefaultOpenIcon());   // Carpeta abierta
+                } else {
+                    setIcon(getDefaultClosedIcon()); // Carpeta cerrada
+                }
+            } else if (userObject instanceof Archivo) {
+                // ES UN ARCHIVO:
+                setIcon(getDefaultLeafIcon());       // Ícono de archivo
+            }
+
+            return this;
+        }
+    }
+
+
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JTree arbolArchivosTree;
     private javax.swing.JButton jButton1;
@@ -420,5 +782,9 @@ public class UIDisco extends javax.swing.JFrame {
     private javax.swing.JPanel jPanel7;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JTabbedPane jTabbedPane1;
+    private javax.swing.JPopupMenu menuContextual;
+    private javax.swing.JMenuItem menuItemCrearArchivo;
+    private javax.swing.JMenuItem menuItemCrearDir;
+    private javax.swing.JMenuItem menuItemEliminar;
     // End of variables declaration//GEN-END:variables
 }
