@@ -84,19 +84,47 @@ public class GestorDisco {
         while (indiceActual != -1) {
             Bloque bloqueActual = disco[indiceActual];
             
-            // Guardamos el índice del siguiente antes de borrarlo
+            // Guardamos el siguiente antes de borrar la referencia
             int indiceSiguiente = bloqueActual.getSiguienteBloque();
             
-            // Liberamos el bloque
+            // Liberamos
             bloqueActual.liberar();
             
-            // Lo agregamos de nuevo a la lista de libres
-            listaBloquesLibres.addAtTheEnd(indiceActual);
+            // --- CAMBIO AQUÍ: Insertamos ordenadamente ---
+            insertarBloqueLibreOrdenado(indiceActual);
+            // ---------------------------------------------
             
-            // Avanzamos al siguiente
             indiceActual = indiceSiguiente;
         }
     }
+    
+    private void insertarBloqueLibreOrdenado(int indiceAInsertar) {
+        // 1. Si la lista está vacía o el índice es menor que el primero, va al inicio
+        if (listaBloquesLibres.isEmpty() || 
+            indiceAInsertar < listaBloquesLibres.getpFirst().getData()) {
+            listaBloquesLibres.addStart(indiceAInsertar);
+            return;
+        }
+
+        // 2. Buscar la posición correcta (antes del primer número que sea mayor que el nuestro)
+        EstructuraDeDatos.Nodo<Integer> actual = listaBloquesLibres.getpFirst();
+        int posicion = 0;
+        
+        // Recorremos mientras haya nodos y el valor sea menor al que queremos insertar
+        while (actual != null && actual.getData() < indiceAInsertar) {
+            actual = actual.getPnext();
+            posicion++;
+        }
+        
+        // 3. Insertamos en esa posición específica
+        // Nota: Si 'actual' es null, significa que llegamos al final (es el mayor de todos)
+        if (actual == null) {
+            listaBloquesLibres.addAtTheEnd(indiceAInsertar);
+        } else {
+            listaBloquesLibres.insertAtIndex(posicion, indiceAInsertar);
+        }
+    }
+    
 
     /**
      * Devuelve el array completo de bloques (para la GUI).

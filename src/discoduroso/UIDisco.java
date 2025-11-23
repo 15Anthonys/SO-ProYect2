@@ -34,14 +34,24 @@ public class UIDisco extends javax.swing.JFrame {
     private SistemaArchivos miSistemaArchivos;
     private PlanificadorDisco miPlanificador;
     private Timer motorSimulacion;
+    
+    private static UIDisco disquito;
+    
 
     private static final int TAMANO_BLOQUE_PX = 63; // Tamaño de cada cuadrado (mucho más grande)
     private static final int ESPACIO_ENTRE_BLOQUES_PX = 5; // Espacio entre cuadrados
     private static final int BLOQUES_POR_FILA = 10; // 10 bloques por fila (para 5 filas)
     private static final int MARGEN_PANEL_PX = 5;
+    
+    // Componentes para la Tabla FAT y la Cola de Procesos
+    private javax.swing.JTable tablaFAT;
+    private javax.swing.JScrollPane scrollTabla;
+    private javax.swing.JTextArea areaColaProcesos; 
+    private javax.swing.JScrollPane scrollCola;
 
     public UIDisco() {
         initComponents();
+        initPanelDerecho();
 
         // 1. Define el tamaño del disco (ej. 50 bloques)
         int TAMANO_DISCO = 50;
@@ -59,6 +69,8 @@ public class UIDisco extends javax.swing.JFrame {
         actualizarArbolGUI();
         actualizarEstadisticas();
         actualizarEstadisticasGUI();
+        
+        actualizarTablasGUI();
 
         motorSimulacion = new Timer(1500, (e) -> {
             avanzarSimulacion();
@@ -78,6 +90,7 @@ public class UIDisco extends javax.swing.JFrame {
             actualizarArbolGUI();     // Refresca el JTree
             actualizarEstadisticas(); // Refresca los labels de bloques
             actualizarEstadisticasGUI();
+            actualizarTablasGUI();
         }
     }
 
@@ -175,11 +188,19 @@ public class UIDisco extends javax.swing.JFrame {
 
             // Lógica de color por archivo
             if (estaOcupado) {
-                String propietario = bloqueActual.getPropietario();
-                int hash = propietario.hashCode();
-                // (Esta es la lógica que genera un color "único" por archivo)
+                String propietario = bloqueActual.getPropietario(); // Esto trae "/root/tarea.txt"
+                
+                // --- CORRECCIÓN DE COLOR ---
+                // Extraemos solo el nombre del archivo para que el Hash coincida con la Tabla FAT
+                int lastSlash = propietario.lastIndexOf('/');
+                String nombreSolo = (lastSlash == -1) ? propietario : propietario.substring(lastSlash + 1);
+                
+                // Usamos 'nombreSolo' para el color, NO 'propietario' completo
+                int hash = nombreSolo.hashCode(); 
                 java.awt.Color colorArchivo = java.awt.Color.getHSBColor(Math.abs(hash % 360) / 360f, 0.7f, 1.0f);
+                
                 g.setColor(colorArchivo);
+                // ---------------------------
             } else {
                 g.setColor(colorLibre);
             }
@@ -260,6 +281,139 @@ public class UIDisco extends javax.swing.JFrame {
             nodoActual = nodoActual.getPnext();
         }
     }
+    
+    private void initPanelDerecho() {
+        // Fijamos tamaño para evitar problemas visuales
+        jPanel5.setPreferredSize(new java.awt.Dimension(300, 400));
+        jPanel5.setLayout(new java.awt.GridLayout(2, 1)); 
+
+        // --- 1. TABLA FAT ---
+        // Nuevas Columnas: COLOR | NOMBRE | BLOQUES | INICIO
+        String[] columnas = {"Color", "Nombre Archivo", "Tamaño", "Inicio"};
+        
+        // Hacemos el modelo NO EDITABLE (Override de isCellEditable)
+        javax.swing.table.DefaultTableModel modelo = new javax.swing.table.DefaultTableModel(null, columnas) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // Esto hace que el usuario no pueda editar ninguna celda
+            }
+        };
+        
+        tablaFAT = new javax.swing.JTable(modelo);
+        
+        // Asignamos nuestro "Pintor" a la columna 0 (La columna de Color)
+        tablaFAT.getColumnModel().getColumn(0).setCellRenderer(new RenderizadorColorFAT());
+        // Hacemos la columna de color pequeñita
+        tablaFAT.getColumnModel().getColumn(0).setPreferredWidth(40);
+        tablaFAT.getColumnModel().getColumn(0).setMaxWidth(40);
+
+        scrollTabla = new javax.swing.JScrollPane(tablaFAT);
+        scrollTabla.setBorder(javax.swing.BorderFactory.createTitledBorder("Tabla FAT"));
+        
+        jPanel5.add(scrollTabla);
+
+        // --- 2. COLA DE PROCESOS (Dejamos el hueco para después) ---
+        areaColaProcesos = new javax.swing.JTextArea();
+        areaColaProcesos.setEditable(false);
+        scrollCola = new javax.swing.JScrollPane(areaColaProcesos);
+        scrollCola.setBorder(javax.swing.BorderFactory.createTitledBorder("Cola de Procesos"));
+        jPanel5.add(scrollCola);
+        
+        jPanel5.revalidate();
+    }
+    
+    public static synchronized UIDisco getInstance() {
+        if (disquito == null) {
+            setDisco(new UIDisco());
+        }
+        return disquito;
+    }
+    
+    public static void setDisco(UIDisco discooo) {
+        disquito = discooo;
+    }
+    
+    public void actualizarTablasGUI() {
+        // --- A. ACTUALIZAR TABLA FAT ---
+        javax.swing.table.DefaultTableModel modelo = (javax.swing.table.DefaultTableModel) tablaFAT.getModel();
+        modelo.setRowCount(0); // Borramos lo anterior
+        
+        // Buscamos todos los archivos desde la raíz
+        if (miSistemaArchivos != null) {
+            llenarTablaFATRecursivo(miSistemaArchivos.getDirectorioRaiz(), modelo);
+        }
+
+        // --- B. ACTUALIZAR COLA DE PROCESOS ---
+        StringBuilder sb = new StringBuilder();
+        
+        // Título con el algoritmo actual
+        if (miPlanificador != null) {
+            sb.append("Algoritmo: ").append(miPlanificador.getPoliticaActual()).append("\n");
+            sb.append("------------------------------------------\n");
+
+            // Recorremos la cola usando TU ListaSimple
+            EstructuraDeDatos.Nodo<Controladores.SolicitudIO> actual = miPlanificador.getColaSolicitudes().getpFirst();
+            
+            if (actual == null) {
+                sb.append("[ Cola vacía - Esperando procesos ]");
+            } else {
+                while(actual != null) {
+                    Controladores.SolicitudIO sol = actual.getData();
+                    // Aquí usamos TUS métodos de la clase Proceso
+                    sb.append(sol.getProceso().getId())            // Ej: "Proceso-1"
+                      .append(" [").append(sol.getProceso().getEstado()).append("] ") // Ej: "[LISTO]"
+                      .append(" -> ").append(sol.getOperacion())   // Ej: "CREAR_ARCHIVO"
+                      .append("\n");
+                    
+                    actual = actual.getPnext();
+                }
+            }
+        }
+        areaColaProcesos.setText(sb.toString());
+        
+        EstructuraDeDatos.Nodo<Controladores.SolicitudIO> actual = miPlanificador.getColaSolicitudes().getpFirst();
+
+        if (actual != null) {
+            // Solo mostramos el primero de la cola para no repetir
+            Controladores.SolicitudIO sol = actual.getData();
+            areaColaProcesos.append("Procesando: " + sol.getProceso().getId() + " - " + sol.getOperacion() + "\n");
+        }
+        
+    }
+
+    // Auxiliar para recorrer carpetas y llenar la tabla
+    private void llenarTablaFATRecursivo(Modelo.Directorio dir, javax.swing.table.DefaultTableModel modelo) {
+        if (dir == null) return;
+        
+        EstructuraDeDatos.ListaSimple<Modelo.EntradaSistemaArchivos> hijos = dir.getHijos();
+        if (hijos == null) return;
+
+        EstructuraDeDatos.Nodo<Modelo.EntradaSistemaArchivos> nodo = hijos.getpFirst();
+
+        while(nodo != null) {
+            Modelo.EntradaSistemaArchivos entrada = nodo.getData();
+            
+            if (entrada instanceof Modelo.Archivo) {
+                Modelo.Archivo arch = (Modelo.Archivo) entrada;
+                
+                // Agregamos fila: 
+                // [0] Color (null, el renderer lo pinta)
+                // [1] Nombre
+                // [2] Tamaño
+                // [3] Inicio
+                modelo.addRow(new Object[]{
+                    "", // Columna color vacía (se pinta sola)
+                    arch.getNombre(), 
+                    arch.getTamanoEnBloques(), 
+                    arch.getPrimerBloque()
+                });
+                
+            } else if (entrada instanceof Modelo.Directorio) {
+                llenarTablaFATRecursivo((Modelo.Directorio) entrada, modelo);
+            }
+            nodo = nodo.getPnext();
+        }
+    }
 
     /**
      * This method is called from within the constructor to initialize the form.
@@ -290,6 +444,7 @@ public class UIDisco extends javax.swing.JFrame {
                 dibujarBloques(g);       // Llama a tu método de dibujo de bloques
             }
         };
+        jLabel8 = new javax.swing.JLabel();
         jPanel5 = new javax.swing.JPanel();
         jPanel6 = new javax.swing.JPanel();
         jLabel3 = new javax.swing.JLabel();
@@ -328,6 +483,7 @@ public class UIDisco extends javax.swing.JFrame {
 
         jPanel2.setBackground(new java.awt.Color(0, 0, 0));
 
+        arbolArchivosTree.setBorder(javax.swing.BorderFactory.createTitledBorder("Explorador"));
         arbolArchivosTree.addMouseListener(new java.awt.event.MouseAdapter() {
             public void mouseClicked(java.awt.event.MouseEvent evt) {
                 arbolArchivosTreeMouseClicked(evt);
@@ -390,15 +546,23 @@ public class UIDisco extends javax.swing.JFrame {
 
         jPanel4.setBackground(new java.awt.Color(204, 255, 204));
 
+        jLabel8.setText("Bloques por Almacenamiento");
+
         javax.swing.GroupLayout jPanel4Layout = new javax.swing.GroupLayout(jPanel4);
         jPanel4.setLayout(jPanel4Layout);
         jPanel4Layout.setHorizontalGroup(
             jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 692, Short.MAX_VALUE)
+            .addGroup(jPanel4Layout.createSequentialGroup()
+                .addGap(278, 278, 278)
+                .addComponent(jLabel8, javax.swing.GroupLayout.PREFERRED_SIZE, 212, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addContainerGap(202, Short.MAX_VALUE))
         );
         jPanel4Layout.setVerticalGroup(
             jPanel4Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGap(0, 0, Short.MAX_VALUE)
+            .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, jPanel4Layout.createSequentialGroup()
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                .addComponent(jLabel8)
+                .addGap(39, 39, 39))
         );
 
         jPanel5.setBackground(new java.awt.Color(255, 204, 255));
@@ -519,7 +683,7 @@ public class UIDisco extends javax.swing.JFrame {
                         .addComponent(jPanel6, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addComponent(jPanel7, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(0, 460, Short.MAX_VALUE)))
+                        .addGap(0, 449, Short.MAX_VALUE)))
                 .addContainerGap())
         );
         jPanel1Layout.setVerticalGroup(
@@ -545,6 +709,19 @@ public class UIDisco extends javax.swing.JFrame {
 
     private void jComboBox1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jComboBox1ActionPerformed
         // TODO add your handling code here:
+        String algoritmoSeleccionado = (String) jComboBox1.getSelectedItem();
+        
+        if (miPlanificador != null) {
+            // 2. Comunicar al planificador el cambio
+            // Asegúrate de tener un método 'setAlgoritmo' en tu clase PlanificadorDisco
+            // que acepte un String o un Enum.
+            miPlanificador.setAlgoritmo(algoritmoSeleccionado);
+            
+            System.out.println("Algoritmo cambiado a: " + algoritmoSeleccionado);
+            
+            // 3. (Opcional) Si quieres reordenar la cola visualmente al instante:
+            // miPlanificador.reordenarCola(); 
+        }
     }//GEN-LAST:event_jComboBox1ActionPerformed
 
     private void arbolArchivosTreeMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_arbolArchivosTreeMouseClicked
@@ -684,6 +861,8 @@ public class UIDisco extends javax.swing.JFrame {
 
                 // 6. Encolar la tarea
                 miPlanificador.agregarSolicitud(solicitud);
+                
+                actualizarTablasGUI();
 
                 System.out.println("Solicitud de archivo '" + nombre + "' (" + tamano + " bloques) encolada.");
 
@@ -760,6 +939,34 @@ public class UIDisco extends javax.swing.JFrame {
             return this;
         }
     }
+    
+    
+    
+    // Clase interna para pintar la columna de "Color" en la tabla
+    class RenderizadorColorFAT extends javax.swing.table.DefaultTableCellRenderer {
+        @Override
+        public java.awt.Component getTableCellRendererComponent(javax.swing.JTable table, Object value, 
+                boolean isSelected, boolean hasFocus, int row, int column) {
+            
+            java.awt.Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            
+            // 1. Obtenemos el nombre del archivo (que está en la columna 1)
+            // Usamos el nombre (o la ruta) para generar el MISMO color que en el disco
+            String nombreArchivo = (String) table.getModel().getValueAt(row, 1); 
+            
+            // 2. Generamos el color con la misma fórmula que usaste en 'dibujarBloques'
+            // NOTA: Si en el disco usas la ruta completa, aquí deberías usar la ruta completa.
+            // Por ahora usaremos el nombre para que coincida visualmente si son únicos.
+            int hash = nombreArchivo.hashCode();
+            java.awt.Color colorArchivo = java.awt.Color.getHSBColor(Math.abs(hash % 360) / 360f, 0.7f, 1.0f);
+            
+            // 3. Pintamos el fondo de la celda
+            c.setBackground(colorArchivo);
+            c.setForeground(colorArchivo); // Texto del mismo color para que no se vea "null"
+            
+            return c;
+        }
+    }
 
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
@@ -773,6 +980,7 @@ public class UIDisco extends javax.swing.JFrame {
     private javax.swing.JLabel jLabel5;
     private javax.swing.JLabel jLabel6;
     private javax.swing.JLabel jLabel7;
+    private javax.swing.JLabel jLabel8;
     private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel2;
     private javax.swing.JPanel jPanel3;

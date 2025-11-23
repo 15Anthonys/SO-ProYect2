@@ -308,4 +308,29 @@ public class PlanificadorDisco {
     public int getCabezaActual() {
         return cabezaActual;
     }
+    /**
+     * Método puente para recibir el String del ComboBox de la GUI
+     * y convertirlo al Enum interno.
+     */
+    public void setAlgoritmo(String nombreAlgoritmo) {
+        switch (nombreAlgoritmo) {
+            case "FIFO":
+                this.politicaActual = PoliticaPlanificacion.FIFO;
+                break;
+            case "SSTF":
+                this.politicaActual = PoliticaPlanificacion.SSTF;
+                break;
+            case "SCAN":
+                this.politicaActual = PoliticaPlanificacion.SCAN;
+                break;
+            case "C-SCAN":
+                this.politicaActual = PoliticaPlanificacion.CSCAN;
+                break;
+            default:
+                System.out.println("Algoritmo no reconocido: " + nombreAlgoritmo);
+                break;
+        }
+        // Reiniciamos dirección por si acaso
+        this.direccionSCAN = DireccionSCAN.ASCENDENTE; 
+    }
 }
