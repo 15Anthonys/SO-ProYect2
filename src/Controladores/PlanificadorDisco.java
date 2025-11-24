@@ -18,6 +18,9 @@ public class PlanificadorDisco {
 
     // Usamos ListaSimple para poder iterar y buscar (necesario para SSTF, SCAN)
     private final ListaSimple<SolicitudIO> colaSolicitudes;
+    private final EstructuraDeDatos.ListaSimple<SolicitudIO> colaNuevos;
+    
+    private final EstructuraDeDatos.ListaSimple<SolicitudIO> listaTerminados;
     
     private final SistemaArchivos sistemaArchivos; // Para ejecutar la operación
     private final GestorDisco gestorDisco;
@@ -36,32 +39,65 @@ public class PlanificadorDisco {
         this.politicaActual = PoliticaPlanificacion.FIFO; // Por defecto
         this.cabezaActual = 0;
         this.direccionSCAN = DireccionSCAN.ASCENDENTE; // Empezamos subiendo
+        this.listaTerminados = new EstructuraDeDatos.ListaSimple<>();
+        this.colaNuevos = new EstructuraDeDatos.ListaSimple<>();
+    }
+    
+    public void agregarSolicitudNUEVA(SolicitudIO solicitud) {
+        solicitud.getProceso().setEstado(EstadoProceso.NUEVO); // Marcar como NUEVO
+        this.colaNuevos.addAtTheEnd(solicitud);
+    }
+    
+    /**
+     * Mueve todos los procesos de la cola de NUEVOS a la cola de LISTOS.
+     */
+    public void transitarNuevosAListos() {
+        // Mientras la cola de nuevos tenga gente...
+        while (!colaNuevos.isEmpty()) {
+            // 1. Sacar el primero de Nuevos
+            SolicitudIO sol = colaNuevos.getpFirst().getData();
+            colaNuevos.deleteFirst(); 
+            
+            // 2. Cambiar su estado a LISTO
+            sol.getProceso().setEstado(EstadoProceso.LISTO);
+            
+            // 3. Meterlo en la cola principal (Listos)
+            // Usamos tu método existente o accedemos a la lista directa
+            colaSolicitudes.addAtTheEnd(sol);
+        }
     }
 
     /**
      * La GUI llamará a este método para añadir una nueva "tarea"
      */
     public void agregarSolicitud(SolicitudIO solicitud) {
-        solicitud.getProceso().setEstado(EstadoProceso.BLOQUEADO);
+        //olicitud.getProceso().setEstado(EstadoProceso.BLOQUEADO);
         this.colaSolicitudes.addAtTheEnd(solicitud);
+    }
+    
+    public EstructuraDeDatos.ListaSimple<SolicitudIO> getColaNuevos() {
+        return colaNuevos;
     }
 
     /**
      * El método principal. Decide qué solicitud tomar, la ejecuta
      * y la elimina de la cola.
      */
-    public boolean procesarSiguienteSolicitud() {
+    /**
+     * MODIFICADO: Ahora devuelve la SolicitudIO procesada para que la GUI
+     * sepa qué mostrar en la tarjeta.
+     */
+    public SolicitudIO procesarSiguienteSolicitud() {
         if (colaSolicitudes.isEmpty()) {
-            return false; // No hay nada que procesar
+            return null; // Antes era false, ahora es null
         }
 
         // 1. Encontrar la siguiente solicitud según la política
         SolicitudIO solicitud = buscarSiguienteSolicitud();
         
-        // Si no se encontró ninguna solicitud (ej. listas vacías en SCAN),
-        // no hacer nada.
+        // Si no se encontró ninguna (ej. listas vacías en SCAN)
         if (solicitud == null) {
-            return false;
+            return null; // Antes era false
         }
 
         // 2. Ejecutar la operación
@@ -72,9 +108,12 @@ public class PlanificadorDisco {
         solicitud.getProceso().setEstado(EstadoProceso.TERMINADO);
 
         // 4. Eliminar la solicitud de la lista
-        colaSolicitudes.delete(solicitud); // Usamos tu método delete()
+        colaSolicitudes.delete(solicitud); 
         
-        return true;
+        listaTerminados.addStart(solicitud);
+        
+        // 5. ¡AQUÍ ESTÁ LA CLAVE! Devolvemos el objeto
+        return solicitud; // Antes era return true;
     }
     
     /**
@@ -98,24 +137,58 @@ public class PlanificadorDisco {
     /**
      * Ejecuta la operación llamando al Sistema de Archivos
      */
-    private void ejecutarSolicitud(SolicitudIO sol) {
-        switch (sol.getOperacion()) {
-            case CREAR_ARCHIVO:
-                sistemaArchivos.crearArchivo(sol.getNombreNuevo(), sol.getTamanoArchivo(), sol.getPadre());
-                break;
-            case ELIMINAR_ARCHIVO:
-                sistemaArchivos.eliminarArchivo((Archivo) sol.getEntradaAEliminar());
-                break;
-            case CREAR_DIRECTORIO:
-                sistemaArchivos.crearDirectorio(sol.getNombreNuevo(), sol.getPadre());
-                break;
-            case ELIMINAR_DIRECTORIO:
-                // Hacemos el cast a Modelo.Directorio
-                sistemaArchivos.eliminarDirectorio((Directorio) sol.getEntradaAEliminar());
-                break;
+    /**
+     * Ejecuta la operación solicitada.
+     * @return TRUE si la operación fue exitosa, FALSE si falló.
+     */
+    private boolean ejecutarSolicitud(SolicitudIO sol) {
+        try {
+            switch (sol.getOperacion()) {
+                case CREAR_ARCHIVO:
+                    // Guardamos el objeto archivo que nos devuelve el sistema
+                    Modelo.Archivo nuevoArchivo = sistemaArchivos.crearArchivo(sol.getNombreNuevo(), sol.getTamanoArchivo(), sol.getPadre());
+                    
+                    if (nuevoArchivo != null) {
+                        // ¡AQUÍ GUARDAMOS QUIÉN LO CREÓ!
+                        nuevoArchivo.setIdProcesoCreador(sol.getProceso().getId());
+                        return true;
+                    }
+                    return false;
+
+                case CREAR_DIRECTORIO:
+                    return sistemaArchivos.crearDirectorio(sol.getNombreNuevo(), sol.getPadre()) != null;
+
+                case ELIMINAR_ARCHIVO:
+                    // Asumimos éxito si no lanza error. 
+                    // Hacemos Cast a Archivo
+                    sistemaArchivos.eliminarArchivo((Modelo.Archivo) sol.getEntradaAEliminar());
+                    return true;
+
+                case ELIMINAR_DIRECTORIO:
+                    // eliminarDirectorio devuelve boolean en tu código, así que lo retornamos
+                    return sistemaArchivos.eliminarDirectorio((Modelo.Directorio) sol.getEntradaAEliminar());
+
+                case MODIFICAR_ARCHIVO:
+                    // --- AQUÍ ESTABA EL ERROR, AHORA SÍ FUNCIONARÁ ---
+                    return sistemaArchivos.modificarArchivo(
+                            (Modelo.Archivo) sol.getEntradaAEliminar(), 
+                            sol.getNombreNuevo(), 
+                            sol.getTamanoArchivo()
+                    );
+                case LEER_ARCHIVO:
+                // Leer no hace nada físico en el disco, solo mueve la aguja.
+                // Simplemente retornamos true indicando éxito.
+                // (Visualmente la tarjeta mostrará que se está leyendo).
+                    return true;
+
+                default:
+                    return true;
+            }
+        } catch (Exception e) {
+            System.out.println("Error ejecutando solicitud: " + e.getMessage());
+            return false;
         }
     }
-
     // ----- ALGORITMOS DE PLANIFICACIÓN -----
 
     /**
@@ -305,6 +378,8 @@ public class PlanificadorDisco {
         return colaSolicitudes;
     }
     
+    
+    
     public int getCabezaActual() {
         return cabezaActual;
     }
@@ -332,5 +407,10 @@ public class PlanificadorDisco {
         }
         // Reiniciamos dirección por si acaso
         this.direccionSCAN = DireccionSCAN.ASCENDENTE; 
+    }
+    
+    
+    public EstructuraDeDatos.ListaSimple<SolicitudIO> getListaTerminados() {
+        return listaTerminados;
     }
 }

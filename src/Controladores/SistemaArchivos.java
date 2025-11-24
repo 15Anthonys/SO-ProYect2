@@ -165,6 +165,94 @@ public class SistemaArchivos {
         return true;
     }
     
+    /**
+     * Modifica nombre y/o tamaño de un archivo existente.
+     * Maneja la lógica de crecer (asignar más) o encoger (liberar cola).
+     */
+    public boolean modificarArchivo(Modelo.Archivo archivo, String nuevoNombre, int nuevoTamano) {
+        
+        // 1. CAMBIO DE NOMBRE (Si es diferente)
+        if (nuevoNombre != null && !nuevoNombre.isEmpty() && !nuevoNombre.equals(archivo.getNombre())) {
+            // Actualizar tabla hash (Borrar entrada vieja, poner nueva)
+            tablaDeRutas.eliminar(archivo.getRutaCompleta().toLowerCase());
+            
+            // Cambiar nombre en el objeto
+            archivo.setNombre(nuevoNombre);
+            
+            // Insertar con nueva ruta
+            tablaDeRutas.insertar(archivo.getRutaCompleta().toLowerCase(), archivo);
+        }
+
+        // 2. CAMBIO DE TAMAÑO (Si el usuario pidió cambiarlo)
+        int tamanoActual = archivo.getTamanoEnBloques();
+        
+        if (nuevoTamano > 0 && nuevoTamano != tamanoActual) {
+            
+            // CASO A: EL ARCHIVO CRECE (Necesitamos más bloques)
+            if (nuevoTamano > tamanoActual) {
+                int bloquesNecesarios = nuevoTamano - tamanoActual;
+                
+                // Verificar espacio
+                if (bloquesNecesarios > gestorDisco.getCantidadBloquesLibres()) {
+                    System.err.println("Error: No hay espacio suficiente para agrandar el archivo.");
+                    return false;
+                }
+                
+                // Asignar los nuevos bloques (nos devuelve el inicio de la nueva cadena)
+                // Usamos la ruta actual como propietario
+                int inicioNuevaCadena = gestorDisco.asignarBloques(bloquesNecesarios, archivo.getRutaCompleta());
+                
+                if (inicioNuevaCadena != -1) {
+                    // TENEMOS QUE UNIR EL FINAL ACTUAL CON EL INICIO NUEVO
+                    // Recorremos el archivo hasta el último bloque actual
+                    int ultimoBloque = obtenerUltimoBloque(archivo.getPrimerBloque());
+                    
+                    // Enlazamos
+                    gestorDisco.getDisco()[ultimoBloque].setSiguienteBloque(inicioNuevaCadena);
+                    
+                    // Actualizamos el tamaño en el objeto
+                    archivo.setTamanoEnBloques(nuevoTamano);
+                }
+
+            // CASO B: EL ARCHIVO SE ENCOGE (Liberamos sobras)
+            } else {
+                int bloquesAConservar = nuevoTamano;
+                
+                // Navegamos hasta el bloque que será el NUEVO final
+                int bloqueActual = archivo.getPrimerBloque();
+                for (int i = 1; i < bloquesAConservar; i++) {
+                    bloqueActual = gestorDisco.getDisco()[bloqueActual].getSiguienteBloque();
+                }
+                
+                // El siguiente de este bloque es donde empieza la basura a borrar
+                int primerBloqueBorrar = gestorDisco.getDisco()[bloqueActual].getSiguienteBloque();
+                
+                // Cortamos la cadena (Ahora este es el fin)
+                gestorDisco.getDisco()[bloqueActual].setSiguienteBloque(-1);
+                
+                // Liberamos el resto
+                gestorDisco.liberarBloques(primerBloqueBorrar);
+                
+                // Actualizamos tamaño
+                archivo.setTamanoEnBloques(nuevoTamano);
+            }
+        }
+        return true;
+    }
+
+    // Método auxiliar para encontrar el final de una cadena de bloques
+    private int obtenerUltimoBloque(int primerBloque) {
+        int actual = primerBloque;
+        while(true) {
+            int siguiente = gestorDisco.getDisco()[actual].getSiguienteBloque();
+            if (siguiente == -1) {
+                return actual;
+            }
+            actual = siguiente;
+        }
+    }
+    
+    
     // --- Getters ---
 
     public Directorio getDirectorioRaiz() {

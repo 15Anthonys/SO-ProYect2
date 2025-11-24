@@ -64,6 +64,7 @@ public class SolicitudIO {
 
     /**
      * Constructor para ELIMINAR (Archivo o Directorio)
+     * 
      */
     public SolicitudIO(Proceso proceso, EntradaSistemaArchivos entradaAEliminar) {
         this.proceso = proceso;
@@ -72,15 +73,53 @@ public class SolicitudIO {
         this.nombreNuevo = null;
         this.tamanoArchivo = 0;
         
+        // Detectamos automáticamente si es archivo o carpeta
         if (entradaAEliminar instanceof Archivo) {
             this.operacion = TipoOperacion.ELIMINAR_ARCHIVO;
-            // ¡Posición real! Usamos el primer bloque del archivo.
+            // Para eliminar, la posición es donde empieza el archivo (importante para SSTF)
             this.posicionEnDisco = ((Archivo) entradaAEliminar).getPrimerBloque();
         } else {
             this.operacion = TipoOperacion.ELIMINAR_DIRECTORIO;
-            // HACK DE SIMULACIÓN: Directorio no tiene bloque, se asigna 0.
             this.posicionEnDisco = 0;
         }
+    }
+    /**
+     * Constructor para MODIFICAR ARCHIVO
+     */
+    public SolicitudIO(Proceso proceso, EntradaSistemaArchivos archivoAModificar, String nuevoNombre, int nuevoTamano) {
+        this.proceso = proceso;
+        this.operacion = TipoOperacion.MODIFICAR_ARCHIVO;
+        
+        // Guardamos la referencia del archivo original en 'entradaAEliminar' 
+        // (Reutilizamos el campo para no crear uno nuevo)
+        this.entradaAEliminar = archivoAModificar; 
+        
+        this.nombreNuevo = nuevoNombre;
+        this.tamanoArchivo = nuevoTamano;
+        
+        // Para SSTF: La posición es donde empieza el archivo actualmente
+        if (archivoAModificar instanceof Archivo) {
+            this.posicionEnDisco = ((Archivo) archivoAModificar).getPrimerBloque();
+        } else {
+            this.posicionEnDisco = 0;
+        }
+        
+        this.padre = null; // No necesitamos padre para modificar
+    }
+    
+    /**
+     * Constructor para LEER ARCHIVO (Solo mueve el cabezal)
+     */
+    public SolicitudIO(Proceso proceso, Modelo.Archivo archivoALeer) {
+        this.proceso = proceso;
+        this.operacion = TipoOperacion.LEER_ARCHIVO;
+        this.padre = null;
+        this.nombreNuevo = null;
+        this.tamanoArchivo = 0;
+        this.entradaAEliminar = null; // No vamos a eliminar nada
+        
+        // ¡IMPORTANTE! La posición destino es donde inicia el archivo
+        this.posicionEnDisco = archivoALeer.getPrimerBloque();
     }
 
     // ----- Getters -----

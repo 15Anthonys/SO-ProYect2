@@ -79,23 +79,39 @@ public class GestorDisco {
      * @param primerBloque El índice del primer bloque de la cadena a liberar.
      */
     public void liberarBloques(int primerBloque) {
-        int indiceActual = primerBloque;
+        System.out.println("--- INICIANDO LIBERACIÓN DE BLOQUES DESDE: " + primerBloque + " ---");
         
-        while (indiceActual != -1) {
+        int indiceActual = primerBloque;
+        int contadorBorrados = 0;
+
+        // Bucle de seguridad para evitar ciclos infinitos si algo se rompió
+        int maxIteraciones = tamanoTotal; 
+        
+        while (indiceActual != -1 && maxIteraciones > 0) {
+            // Validar que el índice sea real
+            if (indiceActual < 0 || indiceActual >= tamanoTotal) {
+                break;
+            }
+
             Bloque bloqueActual = disco[indiceActual];
             
-            // Guardamos el siguiente antes de borrar la referencia
-            int indiceSiguiente = bloqueActual.getSiguienteBloque();
+            // 1. Guardar el puntero al siguiente ANTES de borrar
+            int siguiente = bloqueActual.getSiguienteBloque();
             
-            // Liberamos
-            bloqueActual.liberar();
+            // 2. Limpiar el bloque (Memoria)
+            bloqueActual.liberar(); 
             
-            // --- CAMBIO AQUÍ: Insertamos ordenadamente ---
+            // 3. Devolver a la lista de libres (Tu método ordenado)
             insertarBloqueLibreOrdenado(indiceActual);
-            // ---------------------------------------------
             
-            indiceActual = indiceSiguiente;
+            System.out.println("Bloque " + indiceActual + " liberado. Siguiente -> " + siguiente);
+            
+            // 4. Avanzar
+            indiceActual = siguiente;
+            contadorBorrados++;
+            maxIteraciones--;
         }
+        System.out.println("--- TOTAL LIBERADOS: " + contadorBorrados + " ---");
     }
     
     private void insertarBloqueLibreOrdenado(int indiceAInsertar) {

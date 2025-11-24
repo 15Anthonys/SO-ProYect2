@@ -13,6 +13,8 @@ public enum TipoOperacion {
     CREAR_ARCHIVO,
     ELIMINAR_ARCHIVO,
     CREAR_DIRECTORIO,
-    ELIMINAR_DIRECTORIO
+    ELIMINAR_DIRECTORIO,
+    MODIFICAR_ARCHIVO,
+    LEER_ARCHIVO
     // Puedes añadir LEER o ACTUALIZAR si el proyecto lo requiere
 }
